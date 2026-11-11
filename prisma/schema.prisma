@@ -1,0 +1,108 @@
+// ATLAS (Autonomous Technical Limit Assessment System) Prisma schema.
+// All data lives in a local SQLite file at /home/z/my-project/db/custom.db.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// A discrete runtime/sandbox environment (one per ATLAS scan).
+model Environment {
+  id        String   @id @default(cuid())
+  hostname  String
+  osName    String
+  osVersion String
+  kernel    String
+  cpuModel  String
+  cpuCores  Int
+  memoryMb  Int
+  swapMb    Int      @default(0)
+  diskGb    Int      @default(0)
+  container String
+  publicIp  String
+  arch      String
+  createdAt DateTime @default(now())
+
+  tools         Tool[]
+  capabilities  Capability[]
+  benchmarkRuns BenchmarkRun[]
+  limits        Limit[]
+}
+
+/// A CLI tool / runtime / dev-tool discovered in the environment.
+model Tool {
+  id            String   @id @default(cuid())
+  name          String
+  category      String
+  version       String
+  path          String
+  installed     Boolean  @default(true)
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+}
+
+/// A measured capability of the environment (file IO, HTTP latency, etc.).
+model Capability {
+  id            String   @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  category      String
+  name          String
+  value         Float
+  unit          String
+  details       String
+  createdAt     DateTime @default(now())
+}
+
+/// A named benchmark definition (one row per benchmark name).
+model Benchmark {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  category    String
+  description String
+  unit        String
+  runs        BenchmarkRun[]
+}
+
+/// One execution of a Benchmark against an Environment.
+model BenchmarkRun {
+  id            String   @id @default(cuid())
+  benchmarkId   String
+  benchmark     Benchmark   @relation(fields: [benchmarkId], references: [id], onDelete: Cascade)
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  durationMs   Float
+  throughput   String?
+  success      Boolean  @default(true)
+  details      String?
+  createdAt    DateTime @default(now())
+}
+
+/// A hard/architectural/tool limit discovered in the environment.
+model Limit {
+  id            String   @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  resource      String
+  limitValue    String
+  unit          String
+  kind          String
+  details       String
+  severity      String   @default("info")
+  createdAt     DateTime @default(now())
+}
+
+/// A stored report snapshot (HTML/JSON/CSV).
+model Report {
+  id        String   @id @default(cuid())
+  title     String
+  format    String
+  parameters String   // JSON-encoded parameters object
+  content   String
+  createdAt DateTime @default(now())
+}
