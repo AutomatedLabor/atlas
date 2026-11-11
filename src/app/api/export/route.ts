@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/seed'
 
 /**
  * GET /api/export?format=csv|json
@@ -21,6 +22,7 @@ function csvEscape(value: string): string {
 
 export async function GET(request: Request) {
   try {
+    try { await ensureSeeded() } catch (e) { console.error('[atlas-export] auto-seed failed:', e) }
     const { searchParams } = new URL(request.url)
     const parsed = querySchema.safeParse({
       format: searchParams.get('format') ?? undefined,

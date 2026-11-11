@@ -13,9 +13,109 @@
  * The benchmark results are imported as a JSON module (rather than read with
  * fs.readFileSync) so Next.js bundles them into the serverless function and
  * Vercel's file tracer doesn't have to infer a runtime path.
+ *
+ * The DDL for the 7 tables is also inlined here so that ensureSeeded() can
+ * bootstrap a completely empty SQLite file (the case on a fresh Vercel
+ * serverless instance where /tmp/atlas.db doesn't exist yet). The DDL was
+ * generated with `prisma migrate diff --from-empty --to-schema-datamodel
+ * prisma/schema.prisma --script` and must stay in sync with the Prisma
+ * schema. All statements use CREATE TABLE/INDEX with IF NOT EXISTS so they
+ * are safe to re-run.
  */
 import { db } from './db'
 import benchmarksJson from '../../seed-data/benchmarks.json'
+
+// ---------------------------------------------------------------------------
+// 0. Schema DDL — mirrors prisma/schema.prisma. Runs once per cold-start
+//    instance on a fresh /tmp/atlas.db (CREATE TABLE IF NOT EXISTS is a
+//    no-op on an already-initialised db).
+// ---------------------------------------------------------------------------
+const SCHEMA_DDL: string[] = [
+  `CREATE TABLE IF NOT EXISTS "Environment" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "hostname" TEXT NOT NULL,
+    "osName" TEXT NOT NULL,
+    "osVersion" TEXT NOT NULL,
+    "kernel" TEXT NOT NULL,
+    "cpuModel" TEXT NOT NULL,
+    "cpuCores" INTEGER NOT NULL,
+    "memoryMb" INTEGER NOT NULL,
+    "swapMb" INTEGER NOT NULL DEFAULT 0,
+    "diskGb" INTEGER NOT NULL DEFAULT 0,
+    "container" TEXT NOT NULL,
+    "publicIp" TEXT NOT NULL,
+    "arch" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS "Tool" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "name" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "version" TEXT NOT NULL,
+    "path" TEXT NOT NULL,
+    "installed" BOOLEAN NOT NULL DEFAULT true,
+    "environmentId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "Tool_environmentId_fkey" FOREIGN KEY ("environmentId") REFERENCES "Environment" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS "Capability" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "environmentId" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "value" REAL NOT NULL,
+    "unit" TEXT NOT NULL,
+    "details" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "Capability_environmentId_fkey" FOREIGN KEY ("environmentId") REFERENCES "Environment" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS "Benchmark" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "name" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "description" TEXT NOT NULL,
+    "unit" TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "BenchmarkRun" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "benchmarkId" TEXT NOT NULL,
+    "environmentId" TEXT NOT NULL,
+    "durationMs" REAL NOT NULL,
+    "throughput" TEXT,
+    "success" BOOLEAN NOT NULL DEFAULT true,
+    "details" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "BenchmarkRun_benchmarkId_fkey" FOREIGN KEY ("benchmarkId") REFERENCES "Benchmark" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "BenchmarkRun_environmentId_fkey" FOREIGN KEY ("environmentId") REFERENCES "Environment" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS "Limit" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "environmentId" TEXT NOT NULL,
+    "resource" TEXT NOT NULL,
+    "limitValue" TEXT NOT NULL,
+    "unit" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "details" TEXT NOT NULL,
+    "severity" TEXT NOT NULL DEFAULT 'info',
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "Limit_environmentId_fkey" FOREIGN KEY ("environmentId") REFERENCES "Environment" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS "Report" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "title" TEXT NOT NULL,
+    "format" TEXT NOT NULL,
+    "parameters" TEXT NOT NULL,
+    "content" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Benchmark_name_key" ON "Benchmark"("name")`,
+]
+
+async function ensureSchema(): Promise<void> {
+  for (const stmt of SCHEMA_DDL) {
+    await db.$executeRawUnsafe(stmt)
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 1. Real benchmark results from seed-data/benchmarks.json (imported as a
@@ -200,13 +300,18 @@ async function insertAll(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Public: ensureSeeded()
 //
-// If the DB already has an Environment row, returns immediately (idempotent
-// no-op). Otherwise inserts the full ATLAS seed dataset. Designed to be safe
-// to call from a request handler — wrapped in try/catch by the caller so a
-// seed failure never breaks the API.
+// On first call per cold-start instance:
+//   1. ensureSchema() — create the 7 tables (CREATE TABLE IF NOT EXISTS) on a
+//      fresh /tmp/atlas.db. This is the key step for serverless: Vercel
+//      gives the function a fresh /tmp on every cold start, so the SQLite
+//      file does not exist and `db.environment.count()` would otherwise throw
+//      "The table `main.Environment` does not exist in the current database."
+//   2. Check if Environment has any rows. If yes, return (already seeded).
+//   3. Otherwise, insertAll() the full ATLAS seed dataset.
 //
-// Uses a module-level Promise guard so concurrent first-request calls share
-// one seed run instead of racing.
+// Wrapped in try/catch by the caller (the /api/stats route) so a seed failure
+// never breaks the API. Uses a module-level Promise guard so concurrent
+// first-request calls share one seed run instead of racing.
 // ---------------------------------------------------------------------------
 let seedPromise: Promise<void> | null = null
 
@@ -214,6 +319,7 @@ export async function ensureSeeded(): Promise<void> {
   // If a seed is already in flight on this cold-start instance, reuse it.
   if (seedPromise) return seedPromise
   seedPromise = (async () => {
+    await ensureSchema()
     const envCount = await db.environment.count()
     if (envCount > 0) return // already seeded
     await insertAll()

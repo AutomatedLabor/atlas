@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/seed'
 
 /**
  * GET /api/limits
@@ -20,6 +21,7 @@ const querySchema = z.object({
 
 export async function GET(request: Request) {
   try {
+    try { await ensureSeeded() } catch (e) { console.error('[atlas-limits] auto-seed failed:', e) }
     const { searchParams } = new URL(request.url)
     const parsed = querySchema.safeParse({
       severity: searchParams.get('severity') ?? undefined,

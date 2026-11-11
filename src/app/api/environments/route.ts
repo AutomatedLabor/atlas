@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/seed'
 
 /**
  * GET /api/environments
@@ -13,6 +14,7 @@ const querySchema = z.object({
 
 export async function GET(request: Request) {
   try {
+    try { await ensureSeeded() } catch (e) { console.error('[atlas-env] auto-seed failed:', e) }
     const { searchParams } = new URL(request.url)
     const parsed = querySchema.safeParse({
       id: searchParams.get('id') ?? undefined,

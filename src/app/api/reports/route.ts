@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/seed'
 
 /**
  * GET /api/reports
@@ -28,6 +29,7 @@ function csvEscape(value: string): string {
 
 export async function GET() {
   try {
+    try { await ensureSeeded() } catch (e) { console.error('[atlas-reports] auto-seed failed:', e) }
     const reports = await db.report.findMany({
       orderBy: { createdAt: 'desc' },
     })
@@ -43,6 +45,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    try { await ensureSeeded() } catch (e) { console.error('[atlas-reports] auto-seed failed:', e) }
     let body: unknown
     try {
       body = await request.json()

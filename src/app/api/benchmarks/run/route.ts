@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/seed'
 
 const execFileP = promisify(execFile)
 
@@ -83,6 +84,7 @@ const bodySchema = z.object({
 
 export async function POST(request: Request) {
   try {
+    try { await ensureSeeded() } catch (e) { console.error('[atlas-bench-run] auto-seed failed:', e) }
     let body: unknown
     try {
       body = await request.json()

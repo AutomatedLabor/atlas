@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/seed'
 
 /**
  * GET /api/benchmarks/[id]
@@ -10,6 +11,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
+    try { await ensureSeeded() } catch (e) { console.error('[atlas-benchmarks-id] auto-seed failed:', e) }
     const { id } = await context.params
     const bench = await db.benchmark.findUnique({
       where: { id },

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/seed'
 
 /**
  * GET /api/benchmarks
@@ -10,6 +11,7 @@ import { db } from '@/lib/db'
  */
 export async function GET() {
   try {
+    try { await ensureSeeded() } catch (e) { console.error('[atlas-benchmarks] auto-seed failed:', e) }
     const benchmarks = await db.benchmark.findMany({
       orderBy: { name: 'asc' },
       include: {
